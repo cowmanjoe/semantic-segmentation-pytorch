@@ -18,22 +18,66 @@ import lib.utils.data as torchdata
 import cv2
 from tqdm import tqdm
 import h5py
+from torchvision import transforms
 
+# Round x to the nearest multiple of p and x' >= x
+def round2nearest_multiple(x, p):
+    return ((x - 1) // p + 1) * p
+
+def make_image_resized_list(img, args):
+    img_transform = transforms.Compose([
+        transforms.Normalize(mean=[102.9801, 115.9465, 122.7717], std=[1., 1., 1.])
+    ])
+
+    img = np.array(img)
+    img = np.transpose(img, (1, 2, 0))
+
+    # Resizing code used from dataset.TestDataset.__getitem__ (dataset.py)
+    ori_height, ori_width, _ = img.shape
+
+    img_resized_list = []
+    for this_short_size in args.imgSize:
+        # calculate target height and width
+        scale = min(this_short_size / float(min(ori_height, ori_width)),
+                    args.imgMaxSize / float(max(ori_height, ori_width)))
+        target_height, target_width = int(ori_height * scale), int(ori_width * scale)
+
+        # to avoid rounding in network
+        target_height = round2nearest_multiple(target_height, args.padding_constant)
+        target_width = round2nearest_multiple(target_width, args.padding_constant)
+
+        # resize
+        img_resized = cv2.resize(img.copy(), (target_width, target_height))
+
+        # image to float
+        img_resized = img_resized.astype(np.float32)
+        img_resized = img_resized.transpose((2, 0, 1))
+        img_resized = img_transform(torch.from_numpy(img_resized))
+
+        img_resized = torch.unsqueeze(img_resized, 0)
+        img_resized_list.append(img_resized)
+
+    return img_resized_list
 
 def convert_to_segmented(segmentation_module, image, args):
     segmentation_module.eval()
 
-    # TODO: make sure dimension ordering is correct
     segSize = (image.shape[2], image.shape[1])
 
+    img_resized_list = make_image_resized_list(image, args)
+
     with torch.no_grad():
-        # scores = torch.zeros(1, args.num_class, segSize[0], segSize[1])
-        # scores = async_copy_to(scores, args.gpu)
+        scores = torch.zeros(1, args.num_class, segSize[0], segSize[1])
+        scores = async_copy_to(scores, args.gpu)
 
-        feed_dict = {'img_data': image.unsqueeze(0)}
-        feed_dict = async_copy_to(feed_dict, args.gpu)
+        for img in img_resized_list:
+            feed_dict = {'img_data': img}
+            feed_dict = async_copy_to(feed_dict, args.gpu)
 
-        scores = segmentation_module(feed_dict, segSize=segSize)
+            pred_tmp = segmentation_module(feed_dict, segSize=segSize)
+            scores = scores + pred_tmp / len(args.imgSize)
+
+
 
         _, pred = torch.max(scores, dim=1)
         pred = as_numpy(pred.squeeze(0).cpu())
@@ -84,8 +128,8 @@ def batch_segment_images(args):
     valid_images = None
 
     with h5py.File(args.h5_path, 'r') as f:
-        train_images = np.array(f['train_img'][:10], dtype='u1')
-        valid_images = np.array(f['valid_img'][:10], dtype='u1')
+        train_images = np.array(f['train_img'][10:20], dtype='u1')
+        valid_images = np.empty((0, 0, 0, 0)) # np.array(f['valid_img'][:10], dtype='u1')
 
     for i in range(train_images.shape[0]):
         train_images[i] = cv2.cvtColor(train_images[i], cv2.COLOR_BGR2RGB)
@@ -96,7 +140,6 @@ def batch_segment_images(args):
     train_images = torch.tensor(train_images, dtype=torch.float32)
     valid_images = torch.tensor(valid_images, dtype=torch.float32)
 
-    # TODO: verify this permutes to NCHW
     train_images = train_images.permute(0, 3, 1, 2)
     valid_images = valid_images.permute(0, 3, 1, 2)
 
@@ -105,9 +148,13 @@ def batch_segment_images(args):
     for img in train_images:
         segmented = convert_to_segmented(seg_module, img, args)
 
-        visual = np.concatenate((img.permute(1, 2, 0), segmented), axis=1).astype(np.uint8)
+        # use to just show segmented image
+        # cv2.imshow('test', segmented)
 
+        # use to put original and segmented side by side
+        visual = np.concatenate((img.permute(1, 2, 0), segmented), axis=1).astype(np.uint8)
         cv2.imshow('test', visual)
+
         cv2.waitKey()
 
 
