@@ -4,6 +4,7 @@ import argparse
 from distutils.version import LooseVersion
 # Numerical libs
 import numpy as np
+np.set_printoptions(threshold=np.inf)
 import torch
 import torch.nn as nn
 from scipy.io import loadmat
@@ -20,19 +21,47 @@ from tqdm import tqdm
 colors = loadmat('data/color150.mat')['colors']
 
 
+
+
+#My function to blackout everything except the house
+def blackout(img, pred):
+    houselist = [0, 1, 3, 5, 6, 8, 11, 13, 14, 25, 29, 34, 42, 48, 52, 53, 54, 58, 59, 61, 70, 79, 86, 88, 93, 94, 95, 96, 114]
+    # wall, building, floor, ceiling, road, windowpane, sidewalk, earth, door, house, field, rock, column, skyscraper, path, stairs, runway, screendoor, stairway, bridge, countertop, hovel, awning, booth, pole, land, banister, escalator, and tent
+    black_img = np.zeros((pred.shape[0], pred.shape[1], 3),dtype=np.uint8)
+    it = np.nditer(pred, flags=['multi_index'])
+    
+    while not it.finished:
+        if it[0] in houselist:
+            black_img[it.multi_index[0],it.multi_index[1],:] = img[it.multi_index[0],it.multi_index[1],:]
+        it.iternext()
+        
+    return black_img
+
 def visualize_result(data, pred, args):
     (img, info) = data
 
     # prediction
-    pred_color = colorEncode(pred, colors)
+    #pred_color = colorEncode(pred, colors) #This is the original code
+    pred_color = blackout(img, pred)
+    
 
     # aggregate images and save
     im_vis = np.concatenate((img, pred_color),
                             axis=1).astype(np.uint8)
-
+    
     img_name = info.split('/')[-1]
     cv2.imwrite(os.path.join(args.result,
                 img_name.replace('.jpg', '.png')), im_vis)
+                
+    #save image, pred_color, and im_vis as csv files
+    #np.savetxt("pred.csv",pred, delimiter=",")
+    #img = img.reshape(img.shape[0],img.shape[1]*img.shape[2])
+    #np.savetxt("img.csv", img, delimiter=",")
+    #pred_color = pred_color.reshape(pred_color.shape[0],pred_color.shape[1]*pred_color.shape[2])
+    #np.savetxt("predcolor.csv", pred_color, delimiter=",")
+    #im_vis = im_vis.reshape(im_vis.shape[0],im_vis.shape[1]*im_vis.shape[2])
+    #np.savetxt("im_vis.csv", im_vis, delimiter=",")
+    
 
 
 def test(segmentation_module, loader, args):
@@ -73,7 +102,7 @@ def test(segmentation_module, loader, args):
 
 
 def main(args):
-    torch.cuda.set_device(args.gpu)
+    #torch.cuda.set_device(args.gpu)
 
     # Network Builders
     builder = ModelBuilder()
@@ -105,10 +134,10 @@ def main(args):
         num_workers=5,
         drop_last=True)
 
-    segmentation_module.cuda()
+    #segmentation_module.cuda() #I think this was correct to remove. was told to remove .cuda()
 
     # Main loop
-    test(segmentation_module, loader_test, args)
+    test(segmentation_module, loader_test, args) #if I remove this the code runs, but the output just looks like a normal image
 
     print('Inference done!')
 
