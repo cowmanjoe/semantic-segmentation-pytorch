@@ -124,12 +124,21 @@ def build_segmentation_module(args):
 def batch_segment_images(args):
     seg_module = build_segmentation_module(args)
 
-    train_images = None
-    valid_images = None
-
     with h5py.File(args.h5_path, 'r') as f:
-        train_images = np.array(f['train_img'][10:20], dtype='u1')
-        valid_images = np.empty((0, 0, 0, 0)) # np.array(f['valid_img'][:10], dtype='u1')
+        train_images = np.array(f['train_img'], dtype='u1')
+        valid_images = np.array(f['valid_img'], dtype='u1')
+
+        train_ids = np.array(f['train_ids'])
+        train_storeys = np.array(f['train_storeys'])
+        train_addresses = np.array(f['train_addresses'])
+
+        valid_ids = np.array(f['valid_ids'])
+        valid_storeys = np.array(f['valid_storeys'])
+        valid_addresses = np.array(f['valid_addresses'])
+
+
+        train_shape = train_images.shape
+        valid_shape = valid_images.shape
 
     for i in range(train_images.shape[0]):
         train_images[i] = cv2.cvtColor(train_images[i], cv2.COLOR_BGR2RGB)
@@ -143,19 +152,40 @@ def batch_segment_images(args):
     train_images = train_images.permute(0, 3, 1, 2)
     valid_images = valid_images.permute(0, 3, 1, 2)
 
-    seg_train_images = torch.zeros(train_images.shape, dtype=torch.float32)
+    with h5py.File('out.hdf5', 'w') as f:
+        seg_train_images = f.create_dataset('train_img', train_shape, dtype='u1')
+        seg_valid_images = f.create_dataset('valid_img', valid_shape, dtype='u1')
 
-    for img in train_images:
-        segmented = convert_to_segmented(seg_module, img, args)
+        f.create_dataset('train_ids', data=train_ids)
+        f.create_dataset('train_storeys', data=train_storeys)
+        f.create_dataset('train_addresses', data=train_addresses)
 
-        # use to just show segmented image
-        # cv2.imshow('test', segmented)
+        f.create_dataset('valid_ids', data=valid_ids)
+        f.create_dataset('valid_storeys', data=valid_storeys)
+        f.create_dataset('valid_addresses', data=valid_addresses)
 
-        # use to put original and segmented side by side
-        visual = np.concatenate((img.permute(1, 2, 0), segmented), axis=1).astype(np.uint8)
-        cv2.imshow('test', visual)
+        for i, img in enumerate(train_images):
+            segmented = convert_to_segmented(seg_module, img, args)
+            # segmented = segmented.transpose((1, 2, 0))
 
-        cv2.waitKey()
+            seg_train_images[i] = segmented
+            # use to just show segmented image
+            # cv2.imshow('test', segmented)
+
+            # use to put original and segmented side by side
+            # visual = np.concatenate((img.permute(1, 2, 0), segmented), axis=1).astype(np.uint8)
+            # cv2.imshow('test', visual)
+            #
+            # cv2.waitKey()
+            print('Train image ', i, ' segmented')
+
+
+        for i, img in enumerate(valid_images):
+            segmented = convert_to_segmented(seg_module, img, args)
+
+            seg_valid_images[i] = segmented
+            print('Valid image ', i, ' segmented')
+
 
 
 
